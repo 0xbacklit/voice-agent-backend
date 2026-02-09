@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.venv/
+.env
+.env.*
+.envrc
+.python-version
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+
+# Editors
+.vscode/
+.idea/
+
+# Tests / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Build
+build/
+dist/

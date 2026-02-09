@@ -1,17 +1,37 @@
 from __future__ import annotations
 
 import os
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from dotenv import load_dotenv
 from livekit import agents
 from livekit.agents import AgentSession, JobContext, room_io
 from livekit.plugins import bey, cartesia, deepgram, noise_cancellation, openai, silero
-from livekit.plugins.turn_detector.multilingual import MultilingualModel
 
 from app.agents.voice_agent import VoiceBookingAgent
 from app.config import settings
 
 load_dotenv()
+
+def _start_health_server() -> None:
+    port = os.getenv("PORT")
+    if not port:
+        return
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+        def log_message(self, format, *args):  # noqa: A002
+            return
+
+    server = HTTPServer(("0.0.0.0", int(port)), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
 
 
 def build_session() -> AgentSession:
@@ -34,7 +54,6 @@ def build_session() -> AgentSession:
         ),
         tts=cartesia.TTS(model="sonic-3", voice=os.getenv("CARTESIA_VOICE_ID", "")),
         vad=silero.VAD.load(),
-        turn_detection=MultilingualModel(),
     )
 
 
@@ -59,6 +78,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
+    _start_health_server()
     agents.cli.run_app(
         agents.WorkerOptions(
             entrypoint_fnc=entrypoint,

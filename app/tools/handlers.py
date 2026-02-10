@@ -22,6 +22,10 @@ def tool_invalid_datetime(tool_name: str) -> tuple[ToolCallEvent, dict]:
     return build_tool_event(tool_name, detail, status="failed"), {"error": detail}
 
 
+def tool_missing_info(tool_name: str, detail: str) -> tuple[ToolCallEvent, dict]:
+    return build_tool_event(tool_name, detail, status="failed"), {"error": detail}
+
+
 def tool_identify_user(contact_number: str | None) -> tuple[ToolCallEvent, dict]:
     detail = "Asked for phone number" if not contact_number else f"Received {contact_number}"
     return build_tool_event("identify_user", detail), {"contact_number": contact_number}
@@ -29,7 +33,7 @@ def tool_identify_user(contact_number: str | None) -> tuple[ToolCallEvent, dict]
 
 def tool_fetch_slots() -> tuple[ToolCallEvent, dict]:
     slots = list_available_slots()
-    detail = f"Returned {len(slots)} slots"
+    detail = f"Returned {len(slots)} suggested slots (user can choose any future time)."
     return build_tool_event("fetch_slots", detail), {
         "slots": [slot.__dict__ for slot in slots],
         "slots_human": [format_slot(slot) for slot in slots],
@@ -37,6 +41,15 @@ def tool_fetch_slots() -> tuple[ToolCallEvent, dict]:
 
 
 def tool_book_appointment(appointment: Appointment) -> tuple[ToolCallEvent, dict]:
+    if appointment.status == "conflict":
+        detail = (
+            f"Conflict for {appointment.date} {appointment.time}. "
+            "Ask the user to pick another time."
+        )
+        return build_tool_event("book_appointment", detail, status="failed"), {
+            "appointment": appointment.model_dump(),
+            "error": "conflict",
+        }
     detail = f"Booked {appointment.date} {appointment.time} for {appointment.name}"
     return build_tool_event("book_appointment", detail), {"appointment": appointment.model_dump()}
 

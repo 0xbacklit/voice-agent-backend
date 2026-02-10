@@ -44,14 +44,21 @@ class VoiceBookingAgent(Agent):
                 "You can identify callers, fetch available slots, book, modify, cancel, "
                 "or retrieve appointments, and end the conversation with a summary. "
                 "Available slots are suggestions only; you can book any future date/time the user requests. "
+                "Do not force the user to pick only from available slots. "
+                "Only call fetch_slots if the user explicitly asks for available times. "
                 "Always confirm date, time, and contact number before booking. "
                 "Never call the user by the assistant's name. If the user name is unknown, avoid using a name. "
                 "Never assume or invent a phone number, name, date, or time. "
                 "If the user has not provided a phone number, ask for it before retrieving or booking. "
-                "Do not add or change country codes unless the user explicitly says them. "
-                "Keep responses concise (1-2 short sentences). Ask only for the next required detail. "
-                "Do not ask for preferences unless the user mentions a preference first. "
+                "Once the phone number is confirmed, do not ask again unless the user changes it. "
+                "Ask only for the next required detail. "
+                "Before booking, ask: 'Do you have any preferences?' If the user says none, proceed without preferences. "
                 "Only record preferences explicitly stated by the user (e.g., morning slot, quiet office). "
+                "Know the tool requirements and collect missing fields before calling: "
+                "identify_user requires phone; book_appointment requires name, phone, date, time; "
+                "retrieve_appointments requires phone; cancel_appointment requires phone, date, time; "
+                "modify_appointment requires phone, name, original date/time, new date/time. "
+                "Only call book_appointment after the user has explicitly confirmed the date and time. "
                 "When calling tools, always use date in YYYY-MM-DD format and time in HH:MM (24-hour). "
                 "Never ask the user to speak in those formats; interpret natural language and convert internally. "
                 "When speaking any date or time (slots, booked, modified, cancelled, or retrieved), "
@@ -61,25 +68,6 @@ class VoiceBookingAgent(Agent):
         )
         self.backend_base_url = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
         self.state = AgentState()
-        self._preference_blocklist = {
-            "calm",
-            "friendly",
-            "polite",
-            "helpful",
-            "professional",
-        }
-
-    def _add_preferences(self, preferences: list[str] | None) -> None:
-        if not preferences:
-            return
-        for pref in preferences:
-            normalized = pref.strip()
-            if not normalized:
-                continue
-            if normalized.lower() in self._preference_blocklist:
-                continue
-            if normalized not in self.state.preferences:
-                self.state.preferences.append(normalized)
 
     def _humanize_timestamp(self, iso_ts: str) -> str:
         try:
@@ -167,10 +155,15 @@ class VoiceBookingAgent(Agent):
             "name": name,
             "date": date,
             "time": time,
+            "confirmed_by_user": True,
             "status": "booked",
         }
         self.state.booked.append(appointment)
-        self._add_preferences(preferences)
+        if preferences:
+            for pref in preferences:
+                cleaned = pref.strip()
+                if cleaned and cleaned not in self.state.preferences:
+                    self.state.preferences.append(cleaned)
         self.state.add_action(
             "created",
             f"Booked {self._humanize_date_time(date, time)} for {name}.",
@@ -273,7 +266,7 @@ class VoiceBookingAgent(Agent):
                 "Let me create a summary of this conversation for you.",
                 allow_interruptions=False,
             )
-        self._add_preferences(preferences)
+        # Do not record preferences at end; only capture during booking when user states them.
         created = [a for a in self.state.actions if a["action"] == "created"]
         cancelled = [a for a in self.state.actions if a["action"] == "cancelled"]
         modified = [a for a in self.state.actions if a["action"] == "modified"]

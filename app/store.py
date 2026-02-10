@@ -14,6 +14,7 @@ class SessionState:
     started_at: datetime = field(default_factory=datetime.utcnow)
     tool_calls: List[ToolCallEvent] = field(default_factory=list)
     summary: ConversationSummary | None = None
+    contact_number: str | None = None
 
 
 class InMemoryStore:
@@ -40,6 +41,14 @@ class InMemoryStore:
 
     def list_tool_calls(self, session_id: str) -> List[ToolCallEvent]:
         return self.sessions[session_id].tool_calls
+
+    def set_contact_number(self, session_id: str, contact_number: str) -> None:
+        session = self.get_or_create_session(session_id)
+        session.contact_number = contact_number
+
+    def get_contact_number(self, session_id: str) -> str | None:
+        session = self.get_or_create_session(session_id)
+        return session.contact_number
 
     def add_appointment(self, appointment: Appointment) -> None:
         self.appointments[appointment.id] = appointment

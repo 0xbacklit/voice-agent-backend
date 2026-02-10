@@ -21,6 +21,7 @@ from .tools.handlers import (
     tool_end_conversation,
     tool_fetch_slots,
     tool_identify_user,
+    tool_missing_info,
     tool_invalid_datetime,
     tool_modify_appointment,
     tool_retrieve_appointments,
@@ -142,8 +143,11 @@ async def create_summary(session_id: str, summary: ConversationSummary) -> Conve
 
 @app.post("/tools/identify_user")
 async def identify_user(payload: dict) -> dict:
-    event, result = tool_identify_user(payload.get("contact_number"))
+    contact_number = payload.get("contact_number")
+    event, result = tool_identify_user(contact_number)
     session_id = payload.get("session_id") or store.create_session().session_id
+    if contact_number:
+        store.set_contact_number(session_id, contact_number)
     store.add_tool_call(session_id, event)
     await manager.broadcast(session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")})
     return {"event": event.model_dump(), "result": result}
@@ -161,13 +165,46 @@ async def fetch_slots(payload: dict) -> dict:
 @app.post("/tools/book_appointment")
 async def book_appointment(payload: dict) -> dict:
     appointment = Appointment(**payload["appointment"])
+    session_id = payload.get("session_id") or store.create_session().session_id
+    if not appointment.confirmed_by_user:
+        event, result = tool_missing_info(
+            "book_appointment",
+            "Date/time not confirmed. Ask the user to confirm the date and time before booking.",
+        )
+        store.add_tool_call(session_id, event)
+        await manager.broadcast(
+            session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")}
+        )
+        return {"event": event.model_dump(), "result": result}
+    if appointment.contact_number:
+        store.set_contact_number(session_id, appointment.contact_number)
+    stored_contact = store.get_contact_number(session_id)
+    if not stored_contact:
+        event, result = tool_missing_info(
+            "book_appointment",
+            "Phone number not confirmed. Ask the user for their phone number first.",
+        )
+        store.add_tool_call(session_id, event)
+        await manager.broadcast(
+            session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")}
+        )
+        return {"event": event.model_dump(), "result": result}
+    if not appointment.name.strip():
+        event, result = tool_missing_info(
+            "book_appointment",
+            "Name missing. Ask the user for their name before booking.",
+        )
+        store.add_tool_call(session_id, event)
+        await manager.broadcast(
+            session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")}
+        )
+        return {"event": event.model_dump(), "result": result}
     try:
         appointment.date, appointment.time = _normalize_date_time(
             appointment.date, appointment.time
         )
     except ValueError:
         event, result = tool_invalid_datetime("book_appointment")
-        session_id = payload.get("session_id") or store.create_session().session_id
         store.add_tool_call(session_id, event)
         await manager.broadcast(
             session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")}
@@ -175,7 +212,6 @@ async def book_appointment(payload: dict) -> dict:
         return {"event": event.model_dump(), "result": result}
     created = await create_appointment(appointment)
     event, result = tool_book_appointment(created)
-    session_id = payload.get("session_id") or store.create_session().session_id
     store.add_tool_call(session_id, event)
     await manager.broadcast(session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")})
     return {"event": event.model_dump(), "result": result}
@@ -183,10 +219,21 @@ async def book_appointment(payload: dict) -> dict:
 
 @app.post("/tools/retrieve_appointments")
 async def retrieve_appointments(payload: dict) -> dict:
-    contact_number = payload["contact_number"]
+    contact_number = payload.get("contact_number")
+    session_id = payload.get("session_id") or store.create_session().session_id
+    if not contact_number:
+        event, result = tool_missing_info(
+            "retrieve_appointments",
+            "Phone number missing. Ask the user for their phone number first.",
+        )
+        store.add_tool_call(session_id, event)
+        await manager.broadcast(
+            session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")}
+        )
+        return {"event": event.model_dump(), "result": result}
+    store.set_contact_number(session_id, contact_number)
     appointments = appointment_repo.list_by_contact(contact_number)
     event, result = tool_retrieve_appointments(contact_number, len(appointments))
-    session_id = payload.get("session_id") or store.create_session().session_id
     store.add_tool_call(session_id, event)
     await manager.broadcast(session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")})
     result["appointments"] = [appt.model_dump() for appt in appointments]
@@ -196,11 +243,24 @@ async def retrieve_appointments(payload: dict) -> dict:
 @app.post("/tools/cancel_appointment")
 async def cancel_appointment(payload: dict) -> dict:
     contact_number = payload["contact_number"]
+    session_id = payload.get("session_id") or store.create_session().session_id
+    if contact_number:
+        store.set_contact_number(session_id, contact_number)
+    stored_contact = store.get_contact_number(session_id)
+    if not stored_contact:
+        event, result = tool_missing_info(
+            "cancel_appointment",
+            "Phone number not confirmed. Ask the user for their phone number first.",
+        )
+        store.add_tool_call(session_id, event)
+        await manager.broadcast(
+            session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")}
+        )
+        return {"event": event.model_dump(), "result": result}
     try:
         date, time = _normalize_date_time(payload["date"], payload["time"])
     except ValueError:
         event, result = tool_invalid_datetime("cancel_appointment")
-        session_id = payload.get("session_id") or store.create_session().session_id
         store.add_tool_call(session_id, event)
         await manager.broadcast(
             session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")}
@@ -220,7 +280,6 @@ async def cancel_appointment(payload: dict) -> dict:
         target.status = "cancelled"
         appointment_repo.update(target)
     event, result = tool_cancel_appointment(date, time, name)
-    session_id = payload.get("session_id") or store.create_session().session_id
     store.add_tool_call(session_id, event)
     await manager.broadcast(session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")})
     return {"event": event.model_dump(), "result": result}
@@ -229,18 +288,41 @@ async def cancel_appointment(payload: dict) -> dict:
 @app.post("/tools/modify_appointment")
 async def modify_appointment(payload: dict) -> dict:
     contact_number = payload["contact_number"]
+    session_id = payload.get("session_id") or store.create_session().session_id
+    if contact_number:
+        store.set_contact_number(session_id, contact_number)
+    stored_contact = store.get_contact_number(session_id)
+    if not stored_contact:
+        event, result = tool_missing_info(
+            "modify_appointment",
+            "Phone number not confirmed. Ask the user for their phone number first.",
+        )
+        store.add_tool_call(session_id, event)
+        await manager.broadcast(
+            session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")}
+        )
+        return {"event": event.model_dump(), "result": result}
     try:
         date, time = _normalize_date_time(payload["date"], payload["time"])
         new_date, new_time = _normalize_date_time(payload["new_date"], payload["new_time"])
     except ValueError:
         event, result = tool_invalid_datetime("modify_appointment")
-        session_id = payload.get("session_id") or store.create_session().session_id
         store.add_tool_call(session_id, event)
         await manager.broadcast(
             session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")}
         )
         return {"event": event.model_dump(), "result": result}
     name = payload.get("name")
+    if not name or not name.strip():
+        event, result = tool_missing_info(
+            "modify_appointment",
+            "Name missing. Ask the user for their name before modifying.",
+        )
+        store.add_tool_call(session_id, event)
+        await manager.broadcast(
+            session_id, {"type": "tool_call", "payload": event.model_dump(mode="json")}
+        )
+        return {"event": event.model_dump(), "result": result}
 
     appointments = appointment_repo.list_by_contact(contact_number)
     target = next(

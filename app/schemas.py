@@ -22,6 +22,7 @@ class Appointment(BaseModel):
     date: str
     time: str
     status: str = "booked"
+    confirmed_by_user: bool = False
 
 
 class ConversationSummary(BaseModel):

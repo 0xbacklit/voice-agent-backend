@@ -44,13 +44,12 @@ def build_session() -> AgentSession:
     if settings.bey_api_key:
         os.environ.setdefault("BEY_API_KEY", settings.bey_api_key)
     return AgentSession(
-        stt=deepgram.STT(model="nova-3"),
+        stt=deepgram.STT(model="nova-2"),
         llm=openai.LLM(
             model=settings.openrouter_model,
             base_url=settings.openai_api_base,
             api_key=settings.openai_api_key or settings.openrouter_api_key,
             temperature=0.3,
-            max_tokens=180,
         ),
         tts=cartesia.TTS(model="sonic-3", voice=os.getenv("CARTESIA_VOICE_ID", "")),
         vad=silero.VAD.load(),
@@ -69,9 +68,7 @@ async def entrypoint(ctx: JobContext) -> None:
         room=ctx.room,
         agent=VoiceBookingAgent(),
         room_options=room_io.RoomOptions(
-            audio_input=room_io.AudioInputOptions(
-                noise_cancellation=noise_cancellation.BVC(),
-            )
+            audio_input=room_io.AudioInputOptions(),
         ),
     )
     session.say(settings.agent_greeting, allow_interruptions=False)

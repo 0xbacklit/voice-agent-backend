@@ -27,7 +27,7 @@ class Settings(BaseModel):
     bey_enabled: bool = os.getenv("BEY_ENABLED", "true").lower() == "true"
     agent_greeting: str = os.getenv(
         "AGENT_GREETING",
-        "Hi! I’m Katie, your appointment assistant. I can help you book, reschedule, cancel, or retrieve appointments. How can I help you today?",
+        "Hi! I'm Katie, your appointment assistant. I can help you book, reschedule, cancel, or retrieve appointments. How can I help you today?",
     )
 
 

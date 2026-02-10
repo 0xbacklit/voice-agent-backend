@@ -5,14 +5,15 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from dotenv import load_dotenv
+
+load_dotenv()
+
 from livekit import agents
 from livekit.agents import AgentSession, JobContext, room_io
 from livekit.plugins import bey, cartesia, deepgram, noise_cancellation, openai, silero
 
 from app.agents.voice_agent import VoiceBookingAgent
 from app.config import settings
-
-load_dotenv()
 
 def _start_health_server() -> None:
     port = os.getenv("PORT")

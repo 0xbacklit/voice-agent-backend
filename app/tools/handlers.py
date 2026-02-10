@@ -33,7 +33,7 @@ def tool_identify_user(contact_number: str | None) -> tuple[ToolCallEvent, dict]
 
 def tool_fetch_slots() -> tuple[ToolCallEvent, dict]:
     slots = list_available_slots()
-    detail = f"Returned {len(slots)} suggested slots (user can choose any future time)."
+    detail = f"Returned {len(slots)} suggested slots."
     return build_tool_event("fetch_slots", detail), {
         "slots": [slot.__dict__ for slot in slots],
         "slots_human": [format_slot(slot) for slot in slots],
@@ -76,6 +76,15 @@ def tool_cancel_appointment(date: str, time: str, name: str | None) -> tuple[Too
 
 
 def tool_modify_appointment(appointment: Appointment) -> tuple[ToolCallEvent, dict]:
+    if appointment.status == "conflict":
+        detail = (
+            f"Conflict for {appointment.date} {appointment.time}. "
+            "Ask the user to pick another time."
+        )
+        return build_tool_event("modify_appointment", detail, status="failed"), {
+            "appointment": appointment.model_dump(),
+            "error": "conflict",
+        }
     detail = f"Modified appointment for {appointment.name} to {appointment.date} {appointment.time}"
     return build_tool_event("modify_appointment", detail), {"appointment": appointment.model_dump()}
 

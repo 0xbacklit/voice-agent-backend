@@ -40,30 +40,22 @@ class VoiceBookingAgent(Agent):
     def __init__(self) -> None:
         super().__init__(
             instructions=(
-                "You are a calm, friendly scheduling assistant. "
-                "You can identify callers, fetch available slots, book, modify, cancel, "
-                "or retrieve appointments, and end the conversation with a summary. "
-                "Available slots are suggestions only; you can book any future date/time the user requests. "
-                "Do not force the user to pick only from available slots. "
-                "Only call fetch_slots if the user explicitly asks for available times. "
-                "Always confirm date, time, and contact number before booking. "
-                "Never call the user by the assistant's name. If the user name is unknown, avoid using a name. "
-                "Never assume or invent a phone number, name, date, or time. "
-                "If the user has not provided a phone number, ask for it before retrieving or booking. "
-                "Once the phone number is confirmed, do not ask again unless the user changes it. "
-                "Ask only for the next required detail. "
-                "Before booking, ask: 'Do you have any preferences?' If the user says none, proceed without preferences. "
-                "Only record preferences explicitly stated by the user (e.g., morning slot, quiet office). "
-                "Know the tool requirements and collect missing fields before calling: "
-                "identify_user requires phone; book_appointment requires name, phone, date, time; "
-                "retrieve_appointments requires phone; cancel_appointment requires phone, date, time; "
-                "modify_appointment requires phone, name, original date/time, new date/time. "
-                "Only call book_appointment after the user has explicitly confirmed the date and time. "
-                "When calling tools, always use date in YYYY-MM-DD format and time in HH:MM (24-hour). "
-                "Never ask the user to speak in those formats; interpret natural language and convert internally. "
-                "When speaking any date or time (slots, booked, modified, cancelled, or retrieved), "
-                "always use a natural human format like 'Tuesday, February 10 at 9:00 AM'. "
-                "Never read digits one by one and never say date formats like '2026-02-10'."
+"""You are a professional appointment assistant. Keep replies short and focused.
+Tone: warm, confident, concise. No long explanations or examples.
+
+Rules:
+- Slots are suggestions only; you can book any future date/time the user requests.
+- Before any appointment action (book/retrieve/cancel/modify), call identify_user.
+- Booking requires name, phone number, date & time, preference (optional) . Ask only what's missing.
+- Ask for preferences only once before booking; record only what the user explicitly states.
+- Never invent or assume name/phone/date/time. Don't call the user by the assistant's name.
+- Speak in natural sentences. Never list field labels.
+- Never mention internal IDs or database identifiers in user‑facing speech or summaries.
+Formatting:
+- Tool inputs: date = YYYY-MM-DD, time = HH:MM (24h).
+- Never ask users to speak in those formats; interpret natural language.
+- Speak dates/times naturally (e.g., “Tuesday at 9 AM”), never digit-by-digit.
+"""
             )
         )
         self.backend_base_url = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
@@ -158,20 +150,25 @@ class VoiceBookingAgent(Agent):
             "confirmed_by_user": True,
             "status": "booked",
         }
-        self.state.booked.append(appointment)
-        if preferences:
-            for pref in preferences:
-                cleaned = pref.strip()
-                if cleaned and cleaned not in self.state.preferences:
-                    self.state.preferences.append(cleaned)
-        self.state.add_action(
-            "created",
-            f"Booked {self._humanize_date_time(date, time)} for {name}.",
-        )
-        return await self._post(
+        response = await self._post(
             "/tools/book_appointment",
             {"session_id": self._session_id(context), "appointment": appointment},
         )
+        event = response.get("event", {})
+        result = response.get("result", {})
+        if event.get("status") == "completed":
+            booked_appt = result.get("appointment", appointment)
+            self.state.booked.append(booked_appt)
+            if preferences:
+                for pref in preferences:
+                    cleaned = pref.strip()
+                    if cleaned and cleaned not in self.state.preferences:
+                        self.state.preferences.append(cleaned)
+            self.state.add_action(
+                "created",
+                f"Booked {self._humanize_date_time(date, time)} for {name}.",
+            )
+        return response
 
     @function_tool()
     async def retrieve_appointments(self, context: RunContext, contact_number: str) -> dict:
@@ -193,13 +190,7 @@ class VoiceBookingAgent(Agent):
     ) -> dict:
         """Cancel an existing appointment."""
         self.state.record_tool("cancel_appointment")
-        self._remove_booked_match(contact_number, date, time, name)
-        self.state.add_action(
-            "cancelled",
-            f"Cancelled {self._humanize_date_time(date, time)}"
-            f"{f' for {name}' if name else ''}.",
-        )
-        return await self._post(
+        response = await self._post(
             "/tools/cancel_appointment",
             {
                 "session_id": self._session_id(context),
@@ -209,6 +200,15 @@ class VoiceBookingAgent(Agent):
                 "name": name,
             },
         )
+        event = response.get("event", {})
+        if event.get("status") == "completed":
+            self._remove_booked_match(contact_number, date, time, name)
+            self.state.add_action(
+                "cancelled",
+                f"Cancelled {self._humanize_date_time(date, time)}"
+                f"{f' for {name}' if name else ''}.",
+            )
+        return response
 
     @function_tool()
     async def modify_appointment(
@@ -223,18 +223,7 @@ class VoiceBookingAgent(Agent):
     ) -> dict:
         """Modify an appointment date or time."""
         self.state.record_tool("modify_appointment")
-        removed = self._remove_booked_match(contact_number, date, time, name)
-        if removed:
-            updated = removed[0]
-            updated["date"] = new_date
-            updated["time"] = new_time
-            self.state.booked.append(updated)
-        self.state.add_action(
-            "modified",
-            f"Rescheduled {name} from {self._humanize_date_time(date, time)} "
-            f"to {self._humanize_date_time(new_date, new_time)}.",
-        )
-        return await self._post(
+        response = await self._post(
             "/tools/modify_appointment",
             {
                 "session_id": self._session_id(context),
@@ -246,6 +235,20 @@ class VoiceBookingAgent(Agent):
                 "new_time": new_time,
             },
         )
+        event = response.get("event", {})
+        if event.get("status") == "completed":
+            removed = self._remove_booked_match(contact_number, date, time, name)
+            if removed:
+                updated = removed[0]
+                updated["date"] = new_date
+                updated["time"] = new_time
+                self.state.booked.append(updated)
+            self.state.add_action(
+                "modified",
+                f"Rescheduled {name} from {self._humanize_date_time(date, time)} "
+                f"to {self._humanize_date_time(new_date, new_time)}.",
+            )
+        return response
 
     @function_tool()
     async def end_conversation(

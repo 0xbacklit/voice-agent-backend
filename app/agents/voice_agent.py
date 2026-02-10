@@ -45,10 +45,13 @@ class VoiceBookingAgent(Agent):
                 "or retrieve appointments, and end the conversation with a summary. "
                 "Available slots are suggestions only; you can book any future date/time the user requests. "
                 "Always confirm date, time, and contact number before booking. "
+                "Never call the user by the assistant's name. If the user name is unknown, avoid using a name. "
                 "Never assume or invent a phone number, name, date, or time. "
                 "If the user has not provided a phone number, ask for it before retrieving or booking. "
                 "Do not add or change country codes unless the user explicitly says them. "
                 "Keep responses concise (1-2 short sentences). Ask only for the next required detail. "
+                "Do not ask for preferences unless the user mentions a preference first. "
+                "Only record preferences explicitly stated by the user (e.g., morning slot, quiet office). "
                 "When calling tools, always use date in YYYY-MM-DD format and time in HH:MM (24-hour). "
                 "Never ask the user to speak in those formats; interpret natural language and convert internally. "
                 "When speaking any date or time (slots, booked, modified, cancelled, or retrieved), "
@@ -58,6 +61,25 @@ class VoiceBookingAgent(Agent):
         )
         self.backend_base_url = os.getenv("BACKEND_BASE_URL", "http://localhost:8000")
         self.state = AgentState()
+        self._preference_blocklist = {
+            "calm",
+            "friendly",
+            "polite",
+            "helpful",
+            "professional",
+        }
+
+    def _add_preferences(self, preferences: list[str] | None) -> None:
+        if not preferences:
+            return
+        for pref in preferences:
+            normalized = pref.strip()
+            if not normalized:
+                continue
+            if normalized.lower() in self._preference_blocklist:
+                continue
+            if normalized not in self.state.preferences:
+                self.state.preferences.append(normalized)
 
     def _humanize_timestamp(self, iso_ts: str) -> str:
         try:
@@ -148,8 +170,7 @@ class VoiceBookingAgent(Agent):
             "status": "booked",
         }
         self.state.booked.append(appointment)
-        if preferences:
-            self.state.preferences.extend(preferences)
+        self._add_preferences(preferences)
         self.state.add_action(
             "created",
             f"Booked {self._humanize_date_time(date, time)} for {name}.",
@@ -252,8 +273,7 @@ class VoiceBookingAgent(Agent):
                 "Let me create a summary of this conversation for you.",
                 allow_interruptions=False,
             )
-        if preferences:
-            self.state.preferences.extend(preferences)
+        self._add_preferences(preferences)
         created = [a for a in self.state.actions if a["action"] == "created"]
         cancelled = [a for a in self.state.actions if a["action"] == "cancelled"]
         modified = [a for a in self.state.actions if a["action"] == "modified"]
